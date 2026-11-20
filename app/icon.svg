@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+  <rect width="48" height="48" rx="10.5" fill="#333333"/>
+  <g transform="translate(6.720000000000001 6.720000000000001) scale(0.72)">
+    <!-- The slots are cut out of the plate with the even-odd fill rule rather
+         than painted on top: they are genuine negative space in the original
+         artwork, confirmed by sampling the source bitmap, where a slot's
+         interior is exactly the backdrop colour and not ink. -->
+    <path d="M24 0 L48 24 L24 48 L0 24 Z M20.808 15.876 L22.769 17.836 L32.302 8.302 L30.342 6.342 Z M30.164 25.232 L32.124 27.192 L41.658 17.658 L39.698 15.698 Z" fill-rule="evenodd" fill="#FFFFFF"/>
+    <circle cx="20.669" cy="27.326" r="6.426" fill="#E11D2E"/>
+  </g>
+</svg>

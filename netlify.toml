@@ -1,0 +1,22 @@
+# Netlify — Next.js is deployed through the official OpenNext-based runtime
+# (@netlify/plugin-nextjs), which supports App Router, Server Actions, Proxy,
+# Partial Prerendering and Route Handlers.
+
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "24"
+  NEXT_TELEMETRY_DISABLED = "1"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Security headers are also set in next.config.ts; these cover static assets.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "SAMEORIGIN"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
