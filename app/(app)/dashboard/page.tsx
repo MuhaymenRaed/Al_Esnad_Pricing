@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { Suspense } from "react";
+import { BrandLogo } from "@/components/brand/brand-logo";
 import { Money } from "@/components/common/money";
 import { PageHeader } from "@/components/common/page-header";
 import { PageSkeleton } from "@/components/common/skeletons";
@@ -28,7 +29,10 @@ import { StatusBadge } from "@/components/common/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { describeAudit } from "@/features/audit/describe";
-import { fetchDevicePage } from "@/features/devices/queries";
+import { DashboardBrandFilter } from "@/features/dashboard/brand-scope-filter";
+import { fetchDevicePage, fetchDeviceSummary, fetchLookups } from "@/features/devices/queries";
+import type { Option } from "@/features/devices/types";
+import { parseFilters } from "@/lib/filters/devices";
 import { requireSession, type SessionContext } from "@/lib/auth/session";
 import { brandColor } from "@/lib/brand-colors";
 import { formatNumber, formatPercent, formatRelative, type MoneyFormat } from "@/lib/format";
@@ -67,15 +71,15 @@ type Summary = {
 
 type Ctx = { session: SessionContext; t: TFunction; locale: Locale; money: MoneyFormat };
 
-export default function DashboardPage() {
+export default function DashboardPage({ searchParams }: PageProps<"/dashboard">) {
   return (
     <Suspense fallback={<PageSkeleton />}>
-      <DashboardContent />
+      <DashboardContent searchParams={searchParams} />
     </Suspense>
   );
 }
 
-async function DashboardContent() {
+async function DashboardContent({ searchParams }: { searchParams: PageProps<"/dashboard">["searchParams"] }) {
   const session = await requireSession();
   const { t, locale } = await getT();
   const supabase = await createClient();
@@ -119,8 +123,34 @@ async function DashboardContent() {
   if (session.projection === "submissions") return <>{header}<DataEntryDashboard summary={summary} ctx={ctx} /></>;
   if (session.projection === "catalog") return <>{header}<CatalogDashboard summary={summary} ctx={ctx} /></>;
 
-  const byStatus = summary.devices_by_status ?? {};
-  const f = summary.financials;
+  // Optional brand scope (?brand=id,id): every total below is recomputed for those brands only.
+  const brandIds = parseFilters(await searchParams).brandIds ?? [];
+  const tz = session.settings.timezone;
+  const [scoped, lookups] = await Promise.all([
+    fetchDeviceSummary(supabase, "full", { brandIds, statuses: ["active"] }, tz).catch(() => undefined),
+    fetchLookups().catch(() => ({ brands: [] as Option[], categories: [] as Option[] })),
+  ]);
+  const brandCounts = new Map(scoped?.brands.map((b) => [b.id, b.count]));
+  const brandOptions = lookups.brands.map((b) => ({ id: b.id, label: b.name, color: b.color, count: scoped ? (brandCounts.get(b.id) ?? 0) : undefined }));
+  const brandNames = brandIds.map((id) => lookups.brands.find((b) => b.id === id)?.name).filter(Boolean).join(t("pdf.listSeparator"));
+  const filtered = brandIds.length > 0 && scoped !== undefined;
+  const brandQs = brandIds.length ? `&brand=${brandIds.join(",")}` : "";
+
+  const byStatus: Partial<Record<DeviceStatus, number>> = filtered
+    ? Object.fromEntries(scoped.statuses.map((s) => [s.value, s.count]))
+    : (summary.devices_by_status ?? {});
+  const f: Summary["financials"] = filtered
+    ? {
+        active_devices: scoped.stats.count,
+        total_purchase: scoped.stats.total_purchase ?? 0,
+        total_discount: scoped.stats.total_discount ?? 0,
+        total_payback: scoped.stats.total_payback ?? 0,
+        total_cost: scoped.stats.total_cost ?? 0,
+        total_profit: scoped.stats.total_profit ?? 0,
+        total_selling: scoped.stats.total_selling ?? 0,
+        avg_margin_pct: scoped.stats.avg_margin_pct ?? null,
+      }
+    : summary.financials;
   const isEmpty = (summary.brands ?? 0) === 0 || (summary.categories ?? 0) === 0;
 
   return (
@@ -138,18 +168,33 @@ async function DashboardContent() {
           </section>
         ) : null}
 
+        <section className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="font-heading text-base font-semibold">{t("dashboard.totalsTitle")}</h2>
+            <p className="text-xs text-muted-foreground">
+              {filtered && brandNames ? t("dashboard.totalsForBrands", { names: brandNames }) : t("dashboard.totalsAllBrands")}
+            </p>
+          </div>
+          {brandOptions.length ? <DashboardBrandFilter options={brandOptions} selected={brandIds} /> : null}
+        </section>
+
         <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <StatCard label={t("dashboard.activeDevices")} value={formatNumber(byStatus.active ?? 0)} icon={<Smartphone />} tone="success" href="/devices?status=active" />
+          <StatCard label={t("dashboard.activeDevices")} value={formatNumber(byStatus.active ?? 0)} icon={<Smartphone />} tone="success" href={`/devices?status=active${brandQs}`} />
           <StatCard
             label={t("dashboard.pendingReview")}
             value={formatNumber(byStatus.pending_review ?? 0)}
             icon={<Clock />}
             tone="warning"
-            href="/devices?status=pending_review&sort=oldest"
+            href={`/devices?status=pending_review&sort=oldest${brandQs}`}
             hint={byStatus.pending_review ? t("dashboard.waitingForPricing") : t("dashboard.queueClear")}
           />
-          <StatCard label={t("dashboard.drafts")} value={formatNumber(byStatus.draft ?? 0)} icon={<Layers />} href="/devices?status=draft" />
-          <StatCard label={t("dashboard.rejectedArchived")} value={formatNumber((byStatus.rejected ?? 0) + (byStatus.archived ?? 0))} icon={<XCircle />} href="/devices?status=rejected,archived" />
+          <StatCard label={t("dashboard.drafts")} value={formatNumber(byStatus.draft ?? 0)} icon={<Layers />} href={`/devices?status=draft${brandQs}`} />
+          <StatCard
+            label={t("dashboard.rejectedArchived")}
+            value={formatNumber((byStatus.rejected ?? 0) + (byStatus.archived ?? 0))}
+            icon={<XCircle />}
+            href={`/devices?status=rejected,archived${brandQs}`}
+          />
         </section>
 
         {f && p.has("financials.read") ? (
@@ -167,8 +212,8 @@ async function DashboardContent() {
                 hint={t("dashboard.supplierBenefitsHint")}
               />
               <Kpi label={t("dashboard.finalCost")} value={<Money value={f.total_cost} format={money} className="text-gold" />} />
-              <Kpi label={t("dashboard.totalProfit")} icon={<TrendingUp />} value={<Money value={f.total_profit} format={money} className="text-success" />} />
               <Kpi label={t("dashboard.sellingValue")} value={<Money value={f.total_selling} format={money} className="text-brand" />} />
+              <Kpi label={t("dashboard.totalProfit")} icon={<TrendingUp />} value={<Money value={f.total_profit} format={money} className="text-success" />} />
               <Kpi label={t("dashboard.avgMargin")} icon={<Percent />} value={f.avg_margin_pct === null ? "—" : formatPercent(f.avg_margin_pct)} hint={t("dashboard.avgMarginHint")} />
             </CardContent>
           </Card>
@@ -176,7 +221,7 @@ async function DashboardContent() {
 
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
           <Suspense fallback={<Card className="h-72 animate-pulse shadow-card" />}>
-            <PendingQueue ctx={ctx} />
+            <PendingQueue ctx={ctx} brandIds={brandIds} />
           </Suspense>
           {role === "administrator" && p.has("audit.read") ? (
             <Suspense fallback={<Card className="h-72 animate-pulse shadow-card" />}>
@@ -252,13 +297,13 @@ function ViewAll({ href, label }: { href: string; label: string }) {
   );
 }
 
-async function PendingQueue({ ctx }: { ctx: Ctx }) {
+async function PendingQueue({ ctx, brandIds }: { ctx: Ctx; brandIds: string[] }) {
   const { t, locale, session, money } = ctx;
   const supabase = await createClient();
   const page = await fetchDevicePage({
     supabase,
     projection: "full",
-    filters: { statuses: ["pending_review"], sort: "oldest" },
+    filters: { statuses: ["pending_review"], sort: "oldest", brandIds: brandIds.length ? brandIds : undefined },
     timezone: session.settings.timezone,
     limit: 6,
   }).catch(() => null);
@@ -427,9 +472,7 @@ async function CatalogDashboard({ summary, ctx }: { summary: Summary; ctx: Ctx }
           <CardContent className="grid gap-2 sm:grid-cols-2">
             {(brands ?? []).map((b) => (
               <Link key={b.id} href={`/brands/${b.id}`} className="flex items-center gap-3 rounded-lg border px-3 py-2.5 hover:bg-accent">
-                <span className="flex size-8 items-center justify-center rounded-md text-xs font-bold text-white" style={{ backgroundColor: brandColor(b.accent_color, b.name) }}>
-                  {b.name.slice(0, 2).toUpperCase()}
-                </span>
+                <BrandLogo name={b.name} color={brandColor(b.accent_color, b.name)} logoUrl={b.logo_url} size="sm" />
                 <span className="min-w-0 flex-1 truncate text-sm font-medium">{b.name}</span>
                 <span className="text-xs text-muted-foreground tabular-nums">{b.catalog_count}</span>
               </Link>

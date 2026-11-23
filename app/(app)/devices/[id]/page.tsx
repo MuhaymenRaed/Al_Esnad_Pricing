@@ -10,7 +10,9 @@ import { FormSkeleton } from "@/components/common/skeletons";
 import { StatusBadge } from "@/components/common/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { DeviceDeleteButton } from "@/features/devices/components/device-delete-button";
 import { ManagedDeviceForm } from "@/features/devices/components/managed-device-form";
+import { PriceSyncCard } from "@/features/devices/components/price-sync-card";
 import { SubmissionForm } from "@/features/devices/components/submission-form";
 import { fetchCatalogDevice, fetchLookups, fetchManagedDevice, fetchSubmission } from "@/features/devices/queries";
 import { requireSession } from "@/lib/auth/session";
@@ -59,7 +61,12 @@ async function DeviceContent({ params }: { params: PageProps<"/devices/[id]">["p
             </span>
           }
           breadcrumbs={[home, { label: t("nav.devices"), href: "/devices" }, { label: device.name }]}
-          actions={<StatusBadge status={device.status} className="text-sm" />}
+          actions={
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusBadge status={device.status} className="text-sm" />
+              {caps.deleteDevice(p) && !session.previewRole ? <DeviceDeleteButton id={device.id} name={device.name} /> : null}
+            </div>
+          }
         />
         <ManagedDeviceForm
           initial={{
@@ -74,6 +81,7 @@ async function DeviceContent({ params }: { params: PageProps<"/devices/[id]">["p
               sku: device.sku ?? "",
               metadata: metadataToEntries(device.metadata),
             },
+            linkCodes: record.link_codes ?? [],
             financials: {
               officialPurchasePrice: f ? String(f.official_purchase_price) : "",
               discountType: f?.discount_type ?? "percentage",
@@ -118,18 +126,32 @@ async function DeviceContent({ params }: { params: PageProps<"/devices/[id]">["p
           ) : (
             <div />
           )}
-          <Card className="shadow-card">
-            <CardContent className="space-y-3 pt-5 text-sm">
-              <Meta icon={<UserRound />} label={t("devices.detail.createdBy")} value={record.created_by_name ?? "—"} />
-              <Meta icon={<CalendarClock />} label={t("devices.detail.created")} value={formatDate(device.created_at, tz, "datetime", locale)} />
-              <Meta icon={<UserRound />} label={t("devices.detail.updatedBy")} value={record.updated_by_name ?? "—"} />
-              <Meta
-                icon={<CalendarClock />}
-                label={t("devices.detail.updated")}
-                value={`${formatDate(device.updated_at, tz, "datetime", locale)} (${formatRelative(device.updated_at, locale)})`}
-              />
-            </CardContent>
-          </Card>
+          <div className="space-y-6">
+            <PriceSyncCard
+              deviceId={device.id}
+              codes={record.link_codes ?? []}
+              status={device.status}
+              selling={f ? Number(f.final_selling_price) : null}
+              purchase={f ? Number(f.official_purchase_price) : null}
+              money={money}
+              t={t}
+              locale={locale}
+              canCheck={!session.previewRole}
+              canPublish={caps.publishPrices(p) && !session.previewRole}
+            />
+            <Card className="shadow-card">
+              <CardContent className="space-y-3 pt-5 text-sm">
+                <Meta icon={<UserRound />} label={t("devices.detail.createdBy")} value={record.created_by_name ?? "—"} />
+                <Meta icon={<CalendarClock />} label={t("devices.detail.created")} value={formatDate(device.created_at, tz, "datetime", locale)} />
+                <Meta icon={<UserRound />} label={t("devices.detail.updatedBy")} value={record.updated_by_name ?? "—"} />
+                <Meta
+                  icon={<CalendarClock />}
+                  label={t("devices.detail.updated")}
+                  value={`${formatDate(device.updated_at, tz, "datetime", locale)} (${formatRelative(device.updated_at, locale)})`}
+                />
+              </CardContent>
+            </Card>
+          </div>
         </div>
       </>
     );

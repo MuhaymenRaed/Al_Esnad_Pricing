@@ -7,10 +7,12 @@ import { PageHeader } from "@/components/common/page-header";
 import { WorkspaceSkeleton } from "@/components/common/skeletons";
 import { Button } from "@/components/ui/button";
 import { DevicesWorkspace } from "@/features/devices/components/devices-workspace";
+import { ErpImportButton } from "@/features/devices/components/erp-import-dialog";
 import { loadWorkspace } from "@/features/devices/load-workspace";
 import { requireSession } from "@/lib/auth/session";
 import { getT } from "@/lib/i18n/server";
 import { caps } from "@/lib/permissions";
+import { syncConfig } from "@/lib/price-sync/targets";
 
 export const metadata: Metadata = { title: "Devices" };
 
@@ -43,12 +45,15 @@ async function DevicesContent({ searchParams }: { searchParams: PageProps<"/devi
         description={heading.description}
         actions={
           writable && caps.createDevice(p) ? (
-            <Button asChild size="lg">
-              <Link href="/devices/new">
-                <Plus />
-                {t("nav.newDevice")}
-              </Link>
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              {data.projection === "full" && caps.importDevices(p) && syncConfig().erpnext ? <ErpImportButton money={data.money} /> : null}
+              <Button asChild size="lg">
+                <Link href="/devices/new">
+                  <Plus />
+                  {t("nav.newDevice")}
+                </Link>
+              </Button>
+            </div>
           ) : writable && caps.submit(p) && data.projection === "submissions" ? (
             <Button asChild size="lg">
               <Link href="/devices/new">

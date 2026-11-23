@@ -8,6 +8,7 @@ import { Money } from "@/components/common/money";
 import { StatusBadge } from "@/components/common/status-badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { SyncBadges } from "@/features/devices/components/sync-badges";
 import type { DeviceListRow } from "@/features/devices/types";
 import type { SortKey } from "@/lib/filters/devices";
 import { formatDate, formatPercent, type MoneyFormat } from "@/lib/format";
@@ -25,7 +26,9 @@ type Column = {
   cell: (row: DeviceListRow) => ReactNode;
 };
 
-function columnsFor(projection: DataProjection, money: MoneyFormat, timezone: string, t: TFunction, locale: Locale): Column[] {
+const toNum = (v: string | null | undefined) => (v === null || v === undefined || v === "" ? null : Number(v));
+
+function columnsFor(projection: DataProjection, money: MoneyFormat, timezone: string, t: TFunction, locale: Locale, withSync = false): Column[] {
   const device: Column = {
     id: "device",
     header: t("devices.columns.device"),
@@ -102,6 +105,20 @@ function columnsFor(projection: DataProjection, money: MoneyFormat, timezone: st
       header: t("devices.columns.status"),
       cell: (r) => (r.status ? <StatusBadge status={r.status} /> : null),
     },
+    ...(withSync
+      ? [
+          {
+            id: "publishing",
+            header: t("devices.columns.publishing"),
+            cell: (r: DeviceListRow) =>
+              r.sync ? (
+                <SyncBadges sync={r.sync} money={money} selling={toNum(r.sellingPrice)} purchase={toNum(r.purchasePrice)} />
+              ) : (
+                <span className="text-muted-foreground">—</span>
+              ),
+          } satisfies Column,
+        ]
+      : []),
     {
       id: "purchase",
       header: t("devices.columns.purchase"),
@@ -203,7 +220,7 @@ function DesktopTable({
   const router = useRouter();
   const scrollRef = useRef<HTMLDivElement>(null);
   const { t, locale } = useI18n();
-  const columns = columnsFor(projection, money, timezone, t, locale);
+  const columns = columnsFor(projection, money, timezone, t, locale, projection === "full" && rows.some((r) => r.sync));
   const colCount = columns.length + (selectable ? 1 : 0) + (rowActions ? 1 : 0);
 
   // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual returns non-memoizable functions by design.
@@ -426,6 +443,15 @@ function MobileList({
                       <Money value={r.sellingPrice} format={money} className="text-base font-semibold text-brand" />
                     )}
                   </div>
+                  {projection === "full" && r.sync ? (
+                    <SyncBadges
+                      sync={r.sync}
+                      money={money}
+                      selling={toNum(r.sellingPrice)}
+                      purchase={toNum(r.purchasePrice)}
+                      className="mt-2 flex-row flex-wrap"
+                    />
+                  ) : null}
                   {projection === "full" ? (
                     <dl className="mt-3 grid grid-cols-3 gap-2 border-t pt-3 text-xs">
                       <div>

@@ -115,11 +115,21 @@ export const financialsSchema = z
     }
   });
 
+/**
+ * Link codes — the ERPNext item codes of the device (one per colour) and/or its
+ * alisnad.iq product code. Each code is looked up in both systems for price sync.
+ */
+export const linkCodesSchema = z
+  .array(z.string().trim().max(140, "validation.tooLong"))
+  .max(50, "validation.tooManyCodes")
+  .transform((codes) => [...new Set(codes.filter(Boolean))])
+  .default([]);
+
 export const managedDeviceSchema = z.object({
   id: z.uuid().optional(),
   expectedUpdatedAt: z.string().optional(),
   status: z.enum(["draft", "pending_review", "active", "rejected", "archived"]),
-  device: deviceBasicsSchema,
+  device: deviceBasicsSchema.extend({ linkCodes: linkCodesSchema }),
   financials: financialsSchema,
 });
 export type ManagedDeviceInput = z.input<typeof managedDeviceSchema>;

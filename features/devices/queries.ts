@@ -5,6 +5,8 @@ import type { DeviceFilters, SortKey } from "@/lib/filters/devices";
 import { sanitizeFilters, toRpcFilters } from "@/lib/filters/devices";
 import { caps, type DataProjection } from "@/lib/permissions";
 import { brandColor } from "@/lib/brand-colors";
+import { loadSyncRows } from "@/lib/price-sync/state";
+import { syncConfig } from "@/lib/price-sync/targets";
 import { createClient, type ServerSupabase } from "@/lib/supabase/server";
 import type {
   CatalogSearchRow,
@@ -14,6 +16,7 @@ import type {
   Json,
   SubmissionRow,
 } from "@/types/database";
+import { deriveDeviceSync, type DeviceSync, type SyncCompare } from "./sync-state";
 import type { DevicePage, DeviceListRow, DeviceSummary, Option } from "./types";
 
 const num = (v: number | string | null | undefined) => (v === null || v === undefined ? null : String(v));
@@ -111,6 +114,10 @@ type PageArgs = {
   cursor?: string | null;
   limit: number;
   now?: Date;
+  /** Full projection: add each row's publishing status on ERPNext / alisnad.iq. */
+  withSync?: boolean;
+  /** Company currency decimals (price comparison for the publishing status). */
+  decimals?: number;
 };
 
 export async function fetchDevicePage({
@@ -122,6 +129,8 @@ export async function fetchDevicePage({
   cursor,
   limit,
   now,
+  withSync,
+  decimals = 0,
 }: PageArgs): Promise<DevicePage> {
   const clean = sanitizeFilters(filters, projection);
   const decoded = decodeCursor(cursor);
@@ -158,6 +167,7 @@ export async function fetchDevicePage({
     const { data, error } = await supabase.rpc("search_devices", args);
     if (error) throw error;
     const rows = (data ?? []).map(fromFull);
+    if (withSync) await attachSync(supabase, rows, decimals);
     return {
       rows,
       total: decoded ? null : (data?.[0]?.total_count ?? 0),
@@ -242,6 +252,8 @@ export type ManagedDevice = {
   brand: { id: string; name: string; accent_color: string | null; is_active: boolean };
   category: { id: string; name: string } | null;
   financials: DeviceFinancialsRow | null;
+  /** Price-sync link codes (missing before the link-codes migration runs). */
+  link_codes?: string[];
   created_by_name: string | null;
   updated_by_name: string | null;
   history: Array<{
@@ -276,4 +288,62 @@ export async function fetchSubmission(id: string) {
   if (error?.code === "42501") return null;
   if (error) throw error;
   return data?.find((r) => r.id === id) ?? null;
+}
+
+const toNum = (v: string | null | undefined) => (v === null || v === undefined || v === "" ? null : Number(v));
+
+/** What the server compares, or null when neither alisnad.iq nor ERPNext is connected. */
+export function syncCompare(decimals: number): SyncCompare | null {
+  const c = syncConfig();
+  if (!c.alisnad && !c.erpnext) return null;
+  return { alisnad: c.alisnad, erpnext: c.erpnext, erpSelling: Boolean(c.erpSelling), erpBuying: Boolean(c.erpBuying), decimals };
+}
+
+/**
+ * Publishing status of these devices on ERPNext and alisnad.iq, from their link
+ * codes and the stored status (read as the signed-in user: RLS financials.read).
+ * Null when nothing is connected or the price-sync tables are not installed.
+ */
+export async function loadDeviceSync(
+  supabase: ServerSupabase,
+  ids: string[],
+  decimals = 0,
+  prices?: Map<string, { selling: number | null; purchase: number | null }>,
+): Promise<Map<string, DeviceSync> | null> {
+  const compare = syncCompare(decimals);
+  if (!compare || !ids.length) return null;
+  const loaded = await loadSyncRows(supabase, ids);
+  if (!loaded) return null;
+  let known = prices;
+  if (!known) {
+    known = new Map();
+    for (let i = 0; i < ids.length; i += 100) {
+      const { data } = await supabase
+        .from("device_financials")
+        .select("device_id, final_selling_price, official_purchase_price")
+        .in("device_id", ids.slice(i, i + 100));
+      for (const f of data ?? []) {
+        known.set(f.device_id, { selling: Number(f.final_selling_price), purchase: Number(f.official_purchase_price) });
+      }
+    }
+  }
+  return new Map(
+    ids.map((id) => [
+      id,
+      deriveDeviceSync({
+        compare,
+        codes: loaded.codes.get(id) ?? [],
+        rows: loaded.rows.get(id) ?? [],
+        selling: known.get(id)?.selling ?? null,
+        purchase: known.get(id)?.purchase ?? null,
+      }),
+    ]),
+  );
+}
+
+async function attachSync(supabase: ServerSupabase, rows: DeviceListRow[], decimals: number) {
+  const prices = new Map(rows.map((r) => [r.id, { selling: toNum(r.sellingPrice), purchase: toNum(r.purchasePrice) }]));
+  const sync = await loadDeviceSync(supabase, rows.map((r) => r.id), decimals, prices).catch(() => null);
+  if (!sync) return;
+  for (const row of rows) row.sync = sync.get(row.id);
 }

@@ -12,10 +12,12 @@ export const PERMISSIONS = [
   "devices.create",
   "devices.update",
   "devices.archive",
+  "devices.delete",
   "devices.submit",
   "devices.edit_own_submissions",
   "financials.read",
   "financials.update",
+  "prices.publish",
   "pricing.read_public",
   "reports.export",
   "brands.read",
@@ -72,8 +74,11 @@ export const caps = {
   createDevice: (p: Perms) => p.has("devices.create") && p.has("financials.update"),
   editDevice: (p: Perms) => p.has("devices.update") && p.has("financials.update"),
   archive: (p: Perms) => p.has("devices.archive"),
+  deleteDevice: (p: Perms) => p.has("devices.delete"),
   review: (p: Perms) => p.has("submissions.review") && p.has("devices.update"),
   financialReport: (p: Perms) => p.has("reports.export") && p.has("devices.read_all") && p.has("financials.read"),
+  publishPrices: (p: Perms) => p.has("prices.publish") && p.has("financials.update"),
+  importDevices: (p: Perms) => p.has("devices.create") && p.has("financials.update"),
 };
 
 /**

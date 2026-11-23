@@ -32,7 +32,16 @@ export async function GET(request: NextRequest) {
 
   try {
     const [page, summary] = await Promise.all([
-      fetchDevicePage({ supabase, projection, filters, timezone: session.settings.timezone, cursor, limit }),
+      fetchDevicePage({
+        supabase,
+        projection,
+        filters,
+        timezone: session.settings.timezone,
+        cursor,
+        limit,
+        withSync: projection === "full",
+        decimals: session.settings.currencyDecimals,
+      }),
       !cursor && params.get("summary") === "1"
         ? fetchDeviceSummary(supabase, projection, filters, session.settings.timezone)
         : Promise.resolve(undefined),

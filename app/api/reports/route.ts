@@ -2,10 +2,11 @@ import { renderToBuffer } from "@react-pdf/renderer";
 import { NextResponse, type NextRequest } from "next/server";
 import { ReportDocument } from "@/components/pdf/report-document";
 import { fetchAllDevices } from "@/features/devices/queries";
-import { buildSections, columnsFor, coverStatsFor, scopeLabel, VARIANT_TITLES } from "@/features/reports/build";
+import { buildSections, columnsFor, coverStatsFor, scopeLabel, titlesFor } from "@/features/reports/build";
 import { getSession } from "@/lib/auth/session";
 import { toUserMessage } from "@/lib/errors";
 import { createT } from "@/lib/i18n/core";
+import { getLocale } from "@/lib/i18n/server";
 import { describeFilters, sanitizeFilters, type DeviceFilters } from "@/lib/filters/devices";
 import { formatDate, formatMoney } from "@/lib/format";
 import { caps, type DataProjection } from "@/lib/permissions";
@@ -15,6 +16,11 @@ import { reportRequestSchema, type ReportVariant } from "@/lib/validation/schema
 export const maxDuration = 60;
 
 const NO_STORE = { "cache-control": "private, no-store" };
+const FILE_SLUGS: Record<ReportVariant, string> = {
+  financial: "financial-report",
+  catalog: "price-catalogue",
+  submissions: "my-submissions",
+};
 const json = (status: number, error: string) => NextResponse.json({ error }, { status, headers: NO_STORE });
 
 /**
@@ -70,6 +76,9 @@ export async function POST(request: NextRequest) {
 
   const money = { currency: session.settings.currencyCode, decimals: session.settings.currencyDecimals };
   const timezone = session.settings.timezone;
+  // The report speaks the language the user has chosen for the site.
+  const locale = await getLocale();
+  const t = createT(locale);
   const supabase = await createClient();
 
   try {
@@ -87,16 +96,17 @@ export async function POST(request: NextRequest) {
             brands: brandMap,
             categories: categoryMap,
             formatAmount: (v) => formatMoney(v, money),
-          }, createT("en")).map((c) => c.label)
+          }, t).map((c) => c.label)
         : [];
 
-    const { sections, grandTotals } = buildSections(rows, req.variant, money, timezone, req.groupByBrand);
-    const titles = VARIANT_TITLES[req.variant];
+    const { sections, grandTotals } = buildSections(rows, req.variant, money, timezone, req.groupByBrand, t, locale);
+    const titles = titlesFor(req.variant, t);
     const title = req.title?.trim() || titles.title;
-    const generatedAt = formatDate(new Date(), timezone, "datetime");
+    const generatedAt = formatDate(new Date(), timezone, "datetime", locale);
 
     const buffer = await renderToBuffer(
       ReportDocument({
+        locale,
         company: {
           name: session.settings.companyName,
           tagline: session.settings.companyTagline,
@@ -108,15 +118,16 @@ export async function POST(request: NextRequest) {
         generatedBy: session.fullName ?? session.email,
         scopeLabel: scopeLabel(
           req.scope,
-          (req.brandIds ?? []).map((id) => brandMap.get(id) ?? "Unknown"),
+          (req.brandIds ?? []).map((id) => brandMap.get(id) ?? t("filters.chips.unknown")),
           ids?.length ?? 0,
+          t,
         ),
         filters: chips,
-        columns: columnsFor(req.variant, money.currency),
+        columns: columnsFor(req.variant, t, money.currency),
         sections,
         grandTotals,
         totalRecords: rows.length,
-        coverStats: coverStatsFor(req.variant, rows, money),
+        coverStats: coverStatsFor(req.variant, rows, money, t),
         orientation: req.orientation,
         includeCover: req.includeCover,
         brandPageBreaks: req.brandPageBreaks && req.groupByBrand,
@@ -127,7 +138,8 @@ export async function POST(request: NextRequest) {
     );
 
     const pages = (buffer.toString("latin1").match(/\/Type\s*\/Page[^s]/g) ?? []).length;
-    const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "report";
+    // ASCII file name in every language (custom Latin titles are kept, Arabic ones fall back to the variant).
+    const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || FILE_SLUGS[req.variant];
     const filename = `${slug}-${new Date().toISOString().slice(0, 10)}.pdf`;
 
     return new NextResponse(new Uint8Array(buffer), {

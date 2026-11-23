@@ -26,6 +26,7 @@ export function ConfirmDialog({
   title,
   description,
   confirmLabel,
+  confirmDisabled,
   tone = "default",
   onConfirm,
   open: controlledOpen,
@@ -35,6 +36,8 @@ export function ConfirmDialog({
   title: ReactNode;
   description: ReactNode;
   confirmLabel?: string;
+  /** Explains-only mode: the description says why the action is not possible. */
+  confirmDisabled?: boolean;
   tone?: "default" | "destructive";
   onConfirm: () => Promise<boolean | void> | boolean | void;
   open?: boolean;
@@ -59,7 +62,7 @@ export function ConfirmDialog({
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>{t("common.cancel")}</AlertDialogCancel>
           <AlertDialogAction
-            disabled={pending}
+            disabled={pending || confirmDisabled}
             className={cn(tone === "destructive" && buttonVariants({ variant: "destructive" }))}
             onClick={(event) => {
               event.preventDefault();

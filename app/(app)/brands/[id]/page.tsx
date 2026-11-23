@@ -7,9 +7,13 @@ import { PageHeader } from "@/components/common/page-header";
 import { WorkspaceSkeleton } from "@/components/common/skeletons";
 import { ToneBadge } from "@/components/common/status-badge";
 import { Button } from "@/components/ui/button";
+import { BrandLogo } from "@/components/brand/brand-logo";
+import { BrandDeleteButton } from "@/features/catalogue/components/brand-delete-button";
 import { BrandFormDialog } from "@/features/catalogue/components/brand-form-dialog";
 import { DevicesWorkspace } from "@/features/devices/components/devices-workspace";
 import { loadWorkspace } from "@/features/devices/load-workspace";
+import { fetchDeviceSummary } from "@/features/devices/queries";
+import { STATUSES } from "@/lib/filters/devices";
 import { requireSession } from "@/lib/auth/session";
 import { getT } from "@/lib/i18n/server";
 import { brandColor } from "@/lib/brand-colors";
@@ -47,6 +51,12 @@ async function BrandContent({
   const data = await loadWorkspace(session, await searchParams, { lockedBrandId: id });
   const color = brandColor(brand.accent_color, brand.name);
   const canManage = session.effectivePermissions.has("brands.manage") && !session.previewRole;
+  // Every device of the brand, archived included (they also block deletion).
+  const deviceCount =
+    canManage && data.projection === "full"
+      ? ((await fetchDeviceSummary(supabase, "full", { brandIds: [id], statuses: STATUSES }, session.settings.timezone).catch(() => undefined))
+          ?.stats.count ?? null)
+      : null;
 
   return (
     <>
@@ -54,14 +64,7 @@ async function BrandContent({
         breadcrumbs={[{ label: t("nav.home"), href: "/dashboard" }, { label: t("nav.brands"), href: "/brands" }, { label: brand.name }]}
         title={
           <span className="flex items-center gap-3">
-            {brand.logo_url ? (
-              // eslint-disable-next-line @next/next/no-img-element -- arbitrary admin-provided https logo
-              <img src={brand.logo_url} alt="" className="size-10 rounded-lg border bg-white object-contain p-1" />
-            ) : (
-              <span className="flex size-10 items-center justify-center rounded-lg font-heading text-sm font-bold text-white" style={{ backgroundColor: color }}>
-                {brand.name.slice(0, 2).toUpperCase()}
-              </span>
-            )}
+            <BrandLogo name={brand.name} color={color} logoUrl={brand.logo_url} size="lg" />
             {brand.name}
             {!brand.is_active ? <ToneBadge tone="warning">{t("common.inactive")}</ToneBadge> : null}
           </span>
@@ -69,6 +72,8 @@ async function BrandContent({
         description={brand.description ?? undefined}
         actions={
           canManage ? (
+            <div className="flex flex-wrap items-center gap-2">
+            <BrandDeleteButton id={brand.id} name={brand.name} deviceCount={deviceCount} />
             <BrandFormDialog
               initial={{
                 id: brand.id,
@@ -85,6 +90,7 @@ async function BrandContent({
                 </Button>
               }
             />
+            </div>
           ) : null
         }
       />

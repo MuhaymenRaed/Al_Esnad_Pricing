@@ -1,5 +1,6 @@
 import type { DataProjection } from "@/lib/permissions";
 import type { DeviceStatus, DiscountType } from "@/types/database";
+import type { DeviceSync } from "./sync-state";
 
 /** Normalised row used by every device table, whatever the projection. */
 export type DeviceListRow = {
@@ -27,7 +28,12 @@ export type DeviceListRow = {
   /** Full + catalog projections. */
   sellingPrice?: string | null;
   sortValue?: string;
+  /** Full projection: publishing status on ERPNext and alisnad.iq (absent when neither is connected). */
+  sync?: DeviceSync;
 };
+
+/** What a bulk selection keeps of each device (rows can come from several pages or "select all"). */
+export type SelectedDevice = Pick<DeviceListRow, "id" | "name" | "brandId" | "status">;
 
 export type DevicePage = {
   rows: DeviceListRow[];

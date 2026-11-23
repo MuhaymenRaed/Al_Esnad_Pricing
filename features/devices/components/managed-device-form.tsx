@@ -22,13 +22,17 @@ import { useI18n } from "@/lib/i18n/client";
 import { calculatePricing, type DiscountType } from "@/lib/pricing/calculate";
 import { cn } from "@/lib/utils";
 import type { DeviceStatus } from "@/types/database";
-import { DeviceBasicsFields, useFieldErrors, type DeviceBasics, type FieldErrors } from "./device-basics-fields";
+import { parseLinkCodes } from "../sync-text";
+import { DeviceBasicsFields, DeviceNameField, useFieldErrors, type DeviceBasics, type FieldErrors } from "./device-basics-fields";
+import { LinkCodesField } from "./link-codes-field";
 
 export type ManagedDeviceInitial = {
   id?: string;
   updatedAt?: string;
   status: DeviceStatus;
   basics: DeviceBasics;
+  /** Link codes (ERPNext item codes and/or alisnad.iq product codes) for price sync. */
+  linkCodes?: string[];
   financials: {
     officialPurchasePrice: string;
     discountType: DiscountType;
@@ -59,6 +63,7 @@ export function ManagedDeviceForm({
   const [basics, setBasics] = useState(initial.basics);
   const [fin, setFin] = useState(initial.financials);
   const [status, setStatus] = useState<DeviceStatus>(initial.status);
+  const [linkCodes, setLinkCodes] = useState((initial.linkCodes ?? []).join("\n"));
   const [updatedAt, setUpdatedAt] = useState(initial.updatedAt);
   const [errors, setErrors] = useState<FieldErrors>();
   const errorsOf = useFieldErrors(errors);
@@ -102,6 +107,7 @@ export function ManagedDeviceForm({
           sku: basics.sku,
           modelNumber: basics.modelNumber,
           metadata: basics.metadata.filter((m) => m.key.trim()),
+          linkCodes: parseLinkCodes(linkCodes),
         },
         financials: {
           officialPurchasePrice: fin.officialPurchasePrice,
@@ -119,9 +125,12 @@ export function ManagedDeviceForm({
         return;
       }
       toast.success(tm(result.message ?? "common.saved"), {
-        description: result.data.financials
-          ? t("devices.toast.verified", { price: formatMoney(result.data.financials.finalSellingPrice, money) })
-          : undefined,
+        description: (
+          <div className="space-y-0.5">
+            {result.data.financials ? <p>{t("devices.toast.verified", { price: formatMoney(result.data.financials.finalSellingPrice, money) })}</p> : null}
+            {result.data.linked ? <p>{t("sync.saveHint")}</p> : null}
+          </div>
+        ),
       });
       setVerified(result.data.financials);
       setUpdatedAt(result.data.updatedAt);
@@ -141,86 +150,75 @@ export function ManagedDeviceForm({
         e.preventDefault();
         if (!readOnly) submit();
       }}
+      onKeyDown={focusNextOnEnter}
       noValidate
     >
       <div className="space-y-6">
+        {/* Step 1 — the four pricing inputs first; everything derived updates instantly below them. */}
         <Card className="shadow-card">
           <CardHeader>
-            <CardTitle>{t("form.deviceDetails")}</CardTitle>
-            <CardDescription>{t("form.deviceDetailsDesc")}</CardDescription>
+            <SectionTitle step="1" title={t("form.pricingTitle")} />
+            <CardDescription>{t("form.pricingDesc")}</CardDescription>
           </CardHeader>
-          <CardContent>
-            <DeviceBasicsFields
-              value={basics}
-              onChange={(patch) => setBasics((b) => ({ ...b, ...patch }))}
-              brands={brands}
-              categories={categories}
+          <CardContent className="space-y-5">
+            <DeviceNameField
+              value={basics.name}
+              onChange={(name) => setBasics((b) => ({ ...b, name }))}
               errors={errors}
               disabled={disabled}
+              autoFocus={isNew && !readOnly}
             />
-          </CardContent>
-        </Card>
-
-        <Card className="shadow-card">
-          <CardHeader>
-            <SectionTitle step="1" title={t("form.step1")} />
-            <CardDescription>{t("form.step1Desc")}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Field data-invalid={Boolean(errors?.officialPurchasePrice) || undefined}>
-              <FieldLabel htmlFor="purchase">{t("form.purchasePrice")}</FieldLabel>
-              <MoneyInput
-                id="purchase"
-                value={fin.officialPurchasePrice}
-                onChange={(v) => setFin((f) => ({ ...f, officialPurchasePrice: v }))}
-                suffix={money.currency}
-                decimals={money.decimals}
-                disabled={disabled}
-                invalid={Boolean(errors?.officialPurchasePrice)}
-                placeholder="0"
-              />
-              <FieldError errors={errorsOf("officialPurchasePrice")} />
-            </Field>
-          </CardContent>
-        </Card>
-
-        <Card className="shadow-card">
-          <CardHeader>
-            <SectionTitle step="2" title={t("form.step2")} />
-            <CardDescription>{t("form.step2Desc")}</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-[auto_minmax(0,1fr)]">
-              <Field>
-                <FieldLabel>{t("form.discountType")}</FieldLabel>
-                <ToggleGroup
-                  type="single"
-                  variant="outline"
-                  value={fin.discountType}
+            <div className="grid gap-x-4 gap-y-5 sm:grid-cols-2">
+              <Field data-invalid={Boolean(errors?.officialPurchasePrice) || undefined}>
+                <div className="flex min-h-7 items-center">
+                  <FieldLabel htmlFor="purchase">{t("form.purchaseShort")}</FieldLabel>
+                </div>
+                <MoneyInput
+                  id="purchase"
+                  value={fin.officialPurchasePrice}
+                  onChange={(v) => setFin((f) => ({ ...f, officialPurchasePrice: v }))}
+                  suffix={money.currency}
+                  decimals={money.decimals}
                   disabled={disabled}
-                  onValueChange={(v) => v && setFin((f) => ({ ...f, discountType: v as DiscountType, discountValue: "" }))}
-                >
-                  <ToggleGroupItem value="percentage" className="px-4">
-                    {t("form.percentage")}
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="fixed" className="px-4">
-                    {t("form.fixed")}
-                  </ToggleGroupItem>
-                </ToggleGroup>
+                  invalid={Boolean(errors?.officialPurchasePrice)}
+                  placeholder="0"
+                  className="h-11"
+                />
+                <FieldError errors={errorsOf("officialPurchasePrice")} />
               </Field>
+
               <Field data-invalid={Boolean(errors?.discountValue) || undefined}>
-                <FieldLabel htmlFor="discount">{t("form.discountValue")}</FieldLabel>
+                <div className="flex min-h-7 items-center justify-between gap-2">
+                  <FieldLabel htmlFor="discount">{t("form.discountShort")}</FieldLabel>
+                  <ToggleGroup
+                    type="single"
+                    variant="outline"
+                    size="sm"
+                    value={fin.discountType}
+                    disabled={disabled}
+                    aria-label={t("form.discountType")}
+                    onValueChange={(v) => v && setFin((f) => ({ ...f, discountType: v as DiscountType, discountValue: "" }))}
+                  >
+                    <ToggleGroupItem value="percentage" className="h-7 px-2.5 text-xs" aria-label={t("form.percentage")}>
+                      %
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="fixed" className="h-7 px-2.5 text-xs" aria-label={t("form.fixed")}>
+                      {money.currency}
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                </div>
                 {fin.discountType === "percentage" ? (
-                  <InputGroup className="h-10 bg-card">
+                  <InputGroup className="h-11 bg-card">
                     <InputGroupInput
                       id="discount"
                       inputMode="decimal"
                       dir="ltr"
+                      autoComplete="off"
                       value={fin.discountValue}
                       disabled={disabled}
                       placeholder="0"
                       onChange={(e) => setFin((f) => ({ ...f, discountValue: e.target.value.replace(/[^\d.]/g, "").slice(0, 8) }))}
-                      className="money"
+                      className="money text-[0.95rem]"
                     />
                     <InputGroupAddon align="inline-end">
                       <InputGroupText>%</InputGroupText>
@@ -235,25 +233,16 @@ export function ManagedDeviceForm({
                     decimals={money.decimals}
                     disabled={disabled}
                     placeholder="0"
+                    className="h-11"
                   />
                 )}
                 <FieldError errors={errorsOf("discountValue")} />
               </Field>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field>
-                <FieldLabel>{t("form.discountAmount")}</FieldLabel>
-                <div className="flex h-10 items-center justify-between rounded-lg border border-dashed bg-muted/50 px-3">
-                  <Money value={calc.discountAmount} format={money} />
-                  <span className="truncate ps-2 text-xs text-muted-foreground">
-                    {fin.discountType === "percentage" && fin.discountValue
-                      ? t("form.percentOfPrice", { value: formatPercent(fin.discountValue || 0, 4) })
-                      : t("form.calculated")}
-                  </span>
-                </div>
-              </Field>
+
               <Field data-invalid={Boolean(errors?.paybackAmount) || undefined}>
-                <FieldLabel htmlFor="payback">{t("form.payback")}</FieldLabel>
+                <div className="flex min-h-7 items-center">
+                  <FieldLabel htmlFor="payback">{t("form.payback")}</FieldLabel>
+                </div>
                 <MoneyInput
                   id="payback"
                   value={fin.paybackAmount}
@@ -262,35 +251,90 @@ export function ManagedDeviceForm({
                   decimals={money.decimals}
                   disabled={disabled}
                   placeholder="0"
+                  className="h-11"
                 />
-                <FieldDescription>{t("form.paybackDesc")}</FieldDescription>
                 <FieldError errors={errorsOf("paybackAmount")} />
               </Field>
+
+              <Field data-invalid={Boolean(errors?.companyProfit) || undefined}>
+                <div className="flex min-h-7 items-center">
+                  <FieldLabel htmlFor="profit">{t("form.profitShort")}</FieldLabel>
+                </div>
+                <MoneyInput
+                  id="profit"
+                  value={fin.companyProfit}
+                  onChange={(v) => setFin((f) => ({ ...f, companyProfit: v }))}
+                  suffix={money.currency}
+                  decimals={money.decimals}
+                  disabled={disabled}
+                  placeholder="0"
+                  className="h-11"
+                />
+                <FieldError errors={errorsOf("companyProfit")} />
+              </Field>
             </div>
+
+            <div className="grid gap-3 sm:grid-cols-3" aria-live="polite">
+              <EmphasisAmount
+                label={t("form.discountAmount")}
+                hint={
+                  fin.discountType === "percentage" && fin.discountValue
+                    ? t("form.percentOfPrice", { value: formatPercent(fin.discountValue || 0, 4) })
+                    : t("form.calculatedAutomatically")
+                }
+                value={calc.discountAmount}
+                money={money}
+                tone="muted"
+              />
+              <EmphasisAmount label={t("form.finalCost")} hint={t("form.calculatedAutomatically")} value={calc.finalCostBeforeProfit} money={money} tone="gold" />
+              <EmphasisAmount
+                label={t("form.sellingPrice")}
+                hint={calc.marginPercent ? t("form.margin", { value: calc.marginPercent }) : t("form.calculatedAutomatically")}
+                value={calc.finalSellingPrice}
+                money={money}
+                tone="brand"
+              />
+            </div>
+
+            {blocking.length ? (
+              <ul className="space-y-1.5" role="alert">
+                {blocking.map((issue) => (
+                  <li key={issue} className="flex items-start gap-2 text-xs text-destructive">
+                    <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
+                    {t(`pricingIssues.${issue}`)}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {!readOnly ? <p className="text-[0.72rem] text-muted-foreground">{t("form.enterHint")}</p> : null}
           </CardContent>
         </Card>
 
+        {/* Step 2 — everything else about the device. */}
         <Card className="shadow-card">
           <CardHeader>
-            <SectionTitle step="3" title={t("form.step3")} />
-            <CardDescription>{t("form.step3Desc")}</CardDescription>
+            <SectionTitle step="2" title={t("form.detailsTitle")} />
+            <CardDescription>{t("form.moreDetailsDesc")}</CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-4 sm:grid-cols-3">
-            <EmphasisAmount label={t("form.finalCost")} hint={t("form.calculatedAutomatically")} value={calc.finalCostBeforeProfit} money={money} tone="gold" />
-            <Field data-invalid={Boolean(errors?.companyProfit) || undefined}>
-              <FieldLabel htmlFor="profit">{t("form.profit")}</FieldLabel>
-              <MoneyInput
-                id="profit"
-                value={fin.companyProfit}
-                onChange={(v) => setFin((f) => ({ ...f, companyProfit: v }))}
-                suffix={money.currency}
-                decimals={money.decimals}
-                disabled={disabled}
-                placeholder="0"
-              />
-              <FieldError errors={errorsOf("companyProfit")} />
-            </Field>
-            <EmphasisAmount label={t("form.sellingPrice")} hint={t("form.calculatedAutomatically")} value={calc.finalSellingPrice} money={money} tone="brand" />
+          <CardContent className="space-y-5">
+            <DeviceBasicsFields
+              value={basics}
+              onChange={(patch) => setBasics((b) => ({ ...b, ...patch }))}
+              brands={brands}
+              categories={categories}
+              errors={errors}
+              disabled={disabled}
+              showName={false}
+            />
+            <LinkCodesField
+              value={linkCodes}
+              onChange={setLinkCodes}
+              money={money}
+              errors={errors}
+              disabled={disabled}
+              deviceName={basics.name}
+              deviceId={initial.id}
+            />
           </CardContent>
         </Card>
       </div>
@@ -326,16 +370,6 @@ export function ManagedDeviceForm({
               </div>
               <Money value={calc.finalSellingPrice} format={money} className="mt-1 block text-2xl font-bold text-brand" />
             </div>
-            {blocking.length ? (
-              <ul className="mt-3 space-y-1.5" role="alert">
-                {blocking.map((issue) => (
-                  <li key={issue} className="flex items-start gap-2 text-xs text-destructive">
-                    <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
-                    {t(`pricingIssues.${issue}`)}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
             {verified && verified.finalSellingPrice !== calc.finalSellingPrice ? (
               <p className="mt-2 text-xs text-muted-foreground">
                 {t("form.lastSaved")} <Money value={verified.finalSellingPrice} format={money} />
@@ -388,14 +422,39 @@ function SectionTitle({ step, title }: { step: string; title: string }) {
   );
 }
 
-function EmphasisAmount({ label, hint, value, money, tone }: { label: string; hint: string; value: string; money: MoneyFormat; tone: "gold" | "brand" }) {
+const EMPHASIS = {
+  muted: { box: "border-border bg-muted/40", text: "text-foreground" },
+  gold: { box: "border-gold/25 bg-gold-soft", text: "text-gold" },
+  brand: { box: "border-brand/25 bg-brand-soft", text: "text-brand" },
+} as const;
+
+function EmphasisAmount({ label, hint, value, money, tone }: { label: string; hint: string; value: string; money: MoneyFormat; tone: keyof typeof EMPHASIS }) {
+  const style = EMPHASIS[tone];
   return (
-    <div className={cn("flex flex-col justify-center rounded-xl border px-4 py-3", tone === "gold" ? "border-gold/25 bg-gold-soft" : "border-brand/25 bg-brand-soft")}>
-      <span className={cn("text-[0.72rem] font-semibold tracking-wide uppercase", tone === "gold" ? "text-gold" : "text-brand")}>{label}</span>
-      <Money value={value} format={money} className={cn("mt-1 text-xl font-bold", tone === "gold" ? "text-gold" : "text-brand")} />
-      <span className="mt-0.5 text-[0.7rem] text-muted-foreground">{hint}</span>
+    <div className={cn("flex flex-col justify-center rounded-xl border px-4 py-3 transition-colors", style.box)}>
+      <span className={cn("text-[0.72rem] font-semibold tracking-wide uppercase", tone === "muted" ? "text-muted-foreground" : style.text)}>{label}</span>
+      <Money value={value} format={money} className={cn("mt-1 text-xl font-bold tabular-nums", style.text)} />
+      <span className="mt-0.5 truncate text-[0.7rem] text-muted-foreground">{hint}</span>
     </div>
   );
+}
+
+/**
+ * Enter moves to the next field (pricing inputs → details) instead of
+ * submitting half-filled forms; Enter on the last field or a button behaves normally.
+ */
+function focusNextOnEnter(event: React.KeyboardEvent<HTMLFormElement>) {
+  if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+  const target = event.target as HTMLElement;
+  if (!(target instanceof HTMLInputElement) || ["submit", "button", "checkbox", "radio"].includes(target.type)) return;
+  const fields = Array.from(
+    event.currentTarget.querySelectorAll<HTMLElement>('input:not([type="hidden"]):not(:disabled), button[role="combobox"]:not(:disabled)'),
+  );
+  const index = fields.indexOf(target);
+  if (index >= 0 && index < fields.length - 1) {
+    event.preventDefault();
+    fields[index + 1].focus();
+  }
 }
 
 function CalcLine({

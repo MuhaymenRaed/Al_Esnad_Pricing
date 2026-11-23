@@ -97,6 +97,41 @@ export type DeviceRow = {
   updated_at: string;
 };
 
+export type PriceSyncStatus = "pending" | "processing" | "done" | "failed" | "superseded";
+
+export type PriceSyncJobRow = {
+  id: number;
+  device_id: string;
+  /** Link codes the price was sent to (alisnad.iq product codes and/or ERPNext item codes). */
+  codes: string[];
+  selling_price: Numeric;
+  /** Purchase price sent to the ERPNext buying price list (null on jobs from before it was sent). */
+  buying_price: Numeric | null;
+  currency_code: string;
+  reason: "price_changed" | "activated" | "linked" | "manual";
+  status: PriceSyncStatus;
+  attempts: number;
+  results: Json;
+  last_error: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** What alisnad.iq / ERPNext held for a device's link codes at the last check or publish. */
+export type DeviceSyncStateRow = {
+  device_id: string;
+  target: "alisnad" | "erpnext";
+  codes: string[];
+  /** [{ code, name, active, selling, buying? }] */
+  items: Json;
+  error: string | null;
+  checked_at: string;
+  published_at: string | null;
+};
+export type DeviceSyncStateUpsert = Pick<DeviceSyncStateRow, "device_id" | "target"> &
+  Partial<Omit<DeviceSyncStateRow, "device_id" | "target">>;
+
 export type DeviceFinancialsRow = {
   device_id: string;
   official_purchase_price: Numeric;
@@ -224,6 +259,22 @@ export type Database = {
       devices: Table<DeviceRow>;
       device_financials: Table<DeviceFinancialsRow>;
       device_public_pricing: Table<{ device_id: string; final_selling_price: Numeric; currency_code: string; updated_at: string }>;
+      price_sync_jobs: Table<PriceSyncJobRow, never, Partial<Pick<PriceSyncJobRow, "status" | "attempts" | "results" | "last_error">>>;
+      device_link_codes: Table<
+        { code: string; device_id: string; created_at: string },
+        never,
+        never,
+        [
+          {
+            foreignKeyName: "device_link_codes_device_id_fkey";
+            columns: ["device_id"];
+            isOneToOne: false;
+            referencedRelation: "devices";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
+      device_sync_state: Table<DeviceSyncStateRow, DeviceSyncStateUpsert, never>;
       audit_logs: Table<
         AuditLogRow,
         never,
@@ -281,6 +332,16 @@ export type Database = {
       };
       save_device: { Args: { p_device_id: string | null; p_device: Json; p_financials: Json | null }; Returns: string };
       set_devices_status: { Args: { p_ids: string[]; p_status: DeviceStatus }; Returns: number };
+      delete_devices: { Args: { p_ids: string[] }; Returns: number };
+      request_price_syncs: {
+        Args: { p_ids: string[] };
+        Returns: Array<{ device_id: string; job_id: number | null; skipped: "not_found" | "not_linked" | "not_active" | "no_price" | null }>;
+      };
+      link_devices: { Args: { p_links: Json }; Returns: Array<{ device_id: string; linked: string[]; taken: string[] }> };
+      import_erp_devices: {
+        Args: { p_items: Json };
+        Returns: Array<{ code: string; device_id: string; result: "created" | "linked" | "exists" | "price_updated" }>;
+      };
       my_context: { Args: Record<string, never>; Returns: Json };
       role_permission_keys: { Args: { p_role: AppRole }; Returns: string[] };
       permission_matrix: { Args: Record<string, never>; Returns: PermissionMatrixRow[] };

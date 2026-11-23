@@ -12,6 +12,7 @@ import { ReportDialog } from "@/features/reports/components/report-dialog";
 import { useI18n } from "@/lib/i18n/client";
 import type { DataProjection } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
+import { BrandLogo } from "@/components/brand/brand-logo";
 import { BrandFormDialog } from "./brand-form-dialog";
 
 export type BrandCard = {
@@ -117,14 +118,8 @@ export function BrandsGrid({
               >
                 <div className="h-1" style={{ backgroundColor: b.color }} />
                 <div className="flex items-start gap-3 p-4">
-                  {b.logoUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element -- arbitrary admin-provided https logo
-                    <img src={b.logoUrl} alt="" className="size-11 shrink-0 rounded-lg border bg-white object-contain p-1" />
-                  ) : (
-                    <span className="flex size-11 shrink-0 items-center justify-center rounded-lg font-heading text-sm font-bold text-white" style={{ backgroundColor: b.color }}>
-                      {b.name.slice(0, 2).toUpperCase()}
-                    </span>
-                  )}
+                  <BrandLogo name={b.name} color={b.color} logoUrl={b.logoUrl} />
+
                   <div className="min-w-0 flex-1">
                     <Link href={`/brands/${b.id}`} className="font-heading font-semibold after:absolute after:inset-0 hover:underline">
                       {b.name}

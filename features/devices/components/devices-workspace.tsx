@@ -9,11 +9,15 @@ import {
   FileDown,
   FileSpreadsheet,
   Layers,
+  Link2,
   ListChecks,
   Printer,
+  RefreshCw,
   RotateCcw,
   SearchX,
+  Send,
   Tags,
+  Trash2,
   X,
   XCircle,
 } from "lucide-react";
@@ -42,8 +46,11 @@ import {
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { setDevicesStatusAction } from "@/features/devices/actions";
-import type { DevicePageResponse, DeviceListRow, Option } from "@/features/devices/types";
+import { deleteDevicesAction, setDevicesStatusAction } from "@/features/devices/actions";
+import { PublishDialog } from "@/features/devices/components/publish-dialog";
+import type { SyncCompare } from "@/features/devices/sync-state";
+import { autoLinkAction, selectAllDevicesAction } from "@/features/devices/sync-actions";
+import type { DevicePageResponse, DeviceListRow, Option, SelectedDevice } from "@/features/devices/types";
 import { ReportDialog, type ReportDialogConfig } from "@/features/reports/components/report-dialog";
 import { useDeviceQuery } from "@/hooks/use-device-query";
 import { useUrlFilters } from "@/hooks/use-url-filters";
@@ -65,12 +72,20 @@ import type { DeviceStatus } from "@/types/database";
 export type WorkspaceCapabilities = {
   canEdit: boolean;
   canArchive: boolean;
+  canDelete: boolean;
   canReview: boolean;
   canExport: boolean;
   canFinancialReport: boolean;
+  /** Publishing to ERPNext / alisnad.iq: check status, publish prices, link by name. */
+  canCheck: boolean;
+  canPublish: boolean;
+  canLink: boolean;
   /** Role preview: everything visible, nothing writable. */
   readOnly: boolean;
 };
+
+/** Price comparison rules and ERPNext price lists (null when neither system is connected). */
+export type WorkspaceSync = { compare: SyncCompare; lists: { erpSelling: string | null; erpBuying: string | null } } | null;
 
 export function DevicesWorkspace({
   projection,
@@ -83,6 +98,7 @@ export function DevicesWorkspace({
   capabilities,
   lockedBrandId,
   searchPlaceholder,
+  sync = null,
 }: {
   projection: DataProjection;
   initialFilters: DeviceFilters;
@@ -94,16 +110,21 @@ export function DevicesWorkspace({
   capabilities: WorkspaceCapabilities;
   lockedBrandId?: string;
   searchPlaceholder: string;
+  sync?: WorkspaceSync;
 }) {
   const { t, tm } = useI18n();
   const locked = useMemo(() => (lockedBrandId ? { brandIds: [lockedBrandId] } : {}), [lockedBrandId]);
   const { filters, setFilters, clear } = useUrlFilters(initialFilters, locked);
   const query = useDeviceQuery(projection, filters, initialPage);
   const queryClient = useQueryClient();
-  const [selected, setSelected] = useState<Map<string, DeviceListRow>>(new Map());
+  const [selected, setSelected] = useState<Map<string, SelectedDevice>>(new Map());
   const [report, setReport] = useState<ReportDialogConfig | null>(null);
   const [pendingStatus, setPendingStatus] = useState<{ ids: string[]; status: DeviceStatus } | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<SelectedDevice[] | null>(null);
+  const [syncDialog, setSyncDialog] = useState<{ ids: string[]; publish: boolean } | null>(null);
   const [, startTransition] = useTransition();
+  const [selectingAll, startSelectingAll] = useTransition();
+  const [linking, startLinking] = useTransition();
 
   const rows = useMemo(() => query.data?.pages.flatMap((p) => p.rows) ?? [], [query.data]);
   const total = query.data?.pages[0]?.total ?? null;
@@ -176,6 +197,50 @@ export function DevicesWorkspace({
     return true;
   };
 
+  const selectAllMatching = () =>
+    startSelectingAll(async () => {
+      const result = await selectAllDevicesAction(filters);
+      if (!result.ok) {
+        toast.error(tm(result.error));
+        return;
+      }
+      setSelected(new Map(result.data.rows.map((r) => [r.id, r])));
+      if (result.data.truncated) toast.warning(t("devices.selectAllTruncated", { count: result.data.rows.length }));
+    });
+
+  const linkByName = (ids: string[]) =>
+    startLinking(async () => {
+      const toastId = toast.loading(t("sync.linking"));
+      const total = { linked: 0, none: 0, already: 0, taken: 0 };
+      for (let i = 0; i < ids.length; i += 40) {
+        const result = await autoLinkAction(ids.slice(i, i + 40));
+        if (!result.ok) {
+          toast.error(tm(result.error), { id: toastId });
+          return;
+        }
+        for (const k of Object.keys(total) as Array<keyof typeof total>) total[k] += result.data[k];
+      }
+      toast.success(t("sync.linkedSummary", total), { id: toastId });
+      await queryClient.invalidateQueries({ queryKey: ["devices"] });
+    });
+
+  const deleteDevices = async (ids: string[]) => {
+    const result = await deleteDevicesAction(ids);
+    if (!result.ok) {
+      toast.error(tm(result.error));
+      return false;
+    }
+    const { deleted, requested } = result.data;
+    toast.success(deleted === requested ? t("devices.toast.deleted", { count: deleted }) : t("devices.toast.deletedPartial", { deleted, requested }));
+    setSelected((prev) => {
+      const next = new Map(prev);
+      for (const id of ids) next.delete(id);
+      return next;
+    });
+    await queryClient.invalidateQueries({ queryKey: ["devices"] });
+    return true;
+  };
+
   const defaultVariant = projection === "full" ? "financial" : projection;
   const openReport = (config: Partial<ReportDialogConfig>) =>
     setReport({
@@ -232,6 +297,12 @@ export function DevicesWorkspace({
                     <DropdownMenuItem onSelect={() => startTransition(() => void changeStatus([row.id], "draft"))}>
                       <RotateCcw />
                       {t("devices.restore")}
+                    </DropdownMenuItem>
+                  ) : null}
+                  {capabilities.canDelete ? (
+                    <DropdownMenuItem variant="destructive" onSelect={() => setPendingDelete([row])}>
+                      <Trash2 />
+                      {t("devices.delete")}
                     </DropdownMenuItem>
                   ) : null}
                 </>
@@ -380,7 +451,42 @@ export function DevicesWorkspace({
               {t("devices.acrossBrands", { count: new Set([...selected.values()].map((r) => r.brandId)).size })}
             </span>
           </span>
+          {projection === "full" && total !== null && selected.size < total ? (
+            <Button size="sm" variant="link" className="h-auto px-1" onClick={selectAllMatching} disabled={selectingAll}>
+              {selectingAll ? t("common.loading") : t("devices.selectAllMatching", { count: formatNumber(total) })}
+            </Button>
+          ) : null}
           <div className="ms-auto flex flex-wrap items-center gap-1.5">
+            {projection === "full" && writable && sync && capabilities.canPublish ? (
+              <Button size="sm" onClick={() => setSyncDialog({ ids: [...selected.keys()], publish: true })}>
+                <Send />
+                {t("sync.publish")}
+              </Button>
+            ) : null}
+            {projection === "full" && writable && sync && (capabilities.canCheck || capabilities.canLink) ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" variant="outline">
+                    <RefreshCw className={linking ? "animate-spin" : undefined} />
+                    {t("sync.menu")}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-64">
+                  {capabilities.canCheck ? (
+                    <DropdownMenuItem onSelect={() => setSyncDialog({ ids: [...selected.keys()], publish: false })}>
+                      <RefreshCw />
+                      {t("sync.checkSelected")}
+                    </DropdownMenuItem>
+                  ) : null}
+                  {capabilities.canLink ? (
+                    <DropdownMenuItem disabled={linking} onSelect={() => linkByName([...selected.keys()])}>
+                      <Link2 />
+                      {t("sync.linkByName")}
+                    </DropdownMenuItem>
+                  ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
             {capabilities.canExport ? (
               <Button size="sm" variant="outline" onClick={() => openReport({ scope: "selected", ids: [...selected.keys()] })}>
                 <Printer />
@@ -397,6 +503,12 @@ export function DevicesWorkspace({
               <Button size="sm" variant="outline" onClick={() => setPendingStatus({ ids: [...selected.keys()], status: "archived" })}>
                 <Archive />
                 {t("devices.archive")}
+              </Button>
+            ) : null}
+            {projection === "full" && writable && capabilities.canDelete ? (
+              <Button size="sm" variant="destructive" onClick={() => setPendingDelete([...selected.values()])}>
+                <Trash2 />
+                {t("devices.delete")}
               </Button>
             ) : null}
             <Button size="sm" variant="ghost" onClick={() => setSelected(new Map())}>
@@ -508,6 +620,33 @@ export function DevicesWorkspace({
         onConfirm={() => (pendingStatus ? changeStatus(pendingStatus.ids, pendingStatus.status) : undefined)}
       />
 
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        onOpenChange={(o) => !o && setPendingDelete(null)}
+        tone="destructive"
+        title={
+          pendingDelete?.length === 1
+            ? t("devices.confirm.deleteOneTitle", { name: pendingDelete[0].name })
+            : t("devices.confirm.deleteTitle", { count: pendingDelete?.length ?? 0 })
+        }
+        description={t("devices.confirm.deleteBody")}
+        confirmLabel={t("devices.delete")}
+        onConfirm={() => (pendingDelete ? deleteDevices(pendingDelete.map((r) => r.id)) : undefined)}
+      />
+
+      {syncDialog && sync ? (
+        <PublishDialog
+          ids={syncDialog.ids}
+          open
+          onOpenChange={(o) => !o && setSyncDialog(null)}
+          money={money}
+          compare={sync.compare}
+          lists={sync.lists}
+          canPublish={syncDialog.publish && capabilities.canPublish && writable}
+          onFinished={() => void queryClient.invalidateQueries({ queryKey: ["devices"] })}
+        />
+      ) : null}
+
       {report ? (
         <ReportDialog
           open
@@ -552,8 +691,8 @@ function SummaryStrip({
           { label: t("devices.stats.devices"), value: formatNumber(s.count), hint: s.pending_count ? t("devices.stats.pending", { count: s.pending_count }) : undefined },
           { label: t("devices.stats.purchaseTotal"), money: s.total_purchase },
           { label: t("devices.stats.costTotal"), money: s.total_cost, tone: "text-gold" },
-          { label: t("devices.stats.profitTotal"), money: s.total_profit, tone: "text-success" },
           { label: t("devices.stats.sellingTotal"), money: s.total_selling, tone: "text-brand" },
+          { label: t("devices.stats.profitTotal"), money: s.total_profit, tone: "text-success" },
           { label: t("devices.stats.avgMargin"), value: s.avg_margin_pct === null || s.avg_margin_pct === undefined ? "—" : formatPercent(s.avg_margin_pct) },
         ]
       : [

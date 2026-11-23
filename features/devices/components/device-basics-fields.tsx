@@ -27,6 +27,42 @@ export function useFieldErrors(errors: FieldErrors | undefined) {
   };
 }
 
+/** The device name input (shown on its own at the top of the pricing form). */
+export function DeviceNameField({
+  value,
+  onChange,
+  errors,
+  disabled,
+  autoFocus,
+}: {
+  value: string;
+  onChange: (name: string) => void;
+  errors?: FieldErrors;
+  disabled?: boolean;
+  autoFocus?: boolean;
+}) {
+  const { t } = useI18n();
+  const errorsOf = useFieldErrors(errors);
+  return (
+    <Field data-invalid={Boolean(errors?.name)}>
+      <FieldLabel htmlFor="device-name">{t("form.deviceName")}</FieldLabel>
+      <Input
+        id="device-name"
+        value={value}
+        maxLength={160}
+        disabled={disabled}
+        autoFocus={autoFocus}
+        autoComplete="off"
+        placeholder={t("form.deviceNamePlaceholder")}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-11"
+        aria-invalid={Boolean(errors?.name) || undefined}
+      />
+      <FieldError errors={errorsOf("name")} />
+    </Field>
+  );
+}
+
 /** Name, brand, category, identifiers and attributes — shared by every device form. */
 export function DeviceBasicsFields({
   value,
@@ -35,6 +71,7 @@ export function DeviceBasicsFields({
   categories,
   errors,
   disabled,
+  showName = true,
   showMetadata = true,
 }: {
   value: DeviceBasics;
@@ -43,6 +80,8 @@ export function DeviceBasicsFields({
   categories: Option[];
   errors?: FieldErrors;
   disabled?: boolean;
+  /** False when the form shows the name elsewhere (the pricing card). */
+  showName?: boolean;
   showMetadata?: boolean;
 }) {
   const { t } = useI18n();
@@ -50,20 +89,7 @@ export function DeviceBasicsFields({
   const optional = <span className="font-normal text-muted-foreground">({t("common.optional")})</span>;
   return (
     <FieldGroup className="gap-4">
-      <Field data-invalid={Boolean(errors?.name)}>
-        <FieldLabel htmlFor="device-name">{t("form.deviceName")}</FieldLabel>
-        <Input
-          id="device-name"
-          value={value.name}
-          maxLength={160}
-          disabled={disabled}
-          placeholder={t("form.deviceNamePlaceholder")}
-          onChange={(e) => onChange({ name: e.target.value })}
-          className="h-11"
-          aria-invalid={Boolean(errors?.name) || undefined}
-        />
-        <FieldError errors={errorsOf("name")} />
-      </Field>
+      {showName ? <DeviceNameField value={value.name} onChange={(name) => onChange({ name })} errors={errors} disabled={disabled} /> : null}
       <div className="grid gap-4 sm:grid-cols-2">
         <Field data-invalid={Boolean(errors?.brandId)}>
           <FieldLabel>{t("form.brand")}</FieldLabel>

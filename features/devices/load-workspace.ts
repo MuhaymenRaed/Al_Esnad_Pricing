@@ -5,7 +5,8 @@ import { parseFilters, type DeviceFilters } from "@/lib/filters/devices";
 import { caps, type DataProjection } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import type { WorkspaceCapabilities } from "./components/devices-workspace";
-import { fetchDevicePage, fetchDeviceSummary, fetchLookups } from "./queries";
+import { syncConfig } from "@/lib/price-sync/targets";
+import { fetchDevicePage, fetchDeviceSummary, fetchLookups, syncCompare } from "./queries";
 import type { DevicePageResponse } from "./types";
 
 /**
@@ -27,7 +28,15 @@ export async function loadWorkspace(
   const timezone = session.settings.timezone;
   const [lookups, page, summary] = await Promise.all([
     fetchLookups(),
-    fetchDevicePage({ supabase, projection, filters: initialFilters, timezone, limit: 50 }).catch(() => undefined),
+    fetchDevicePage({
+      supabase,
+      projection,
+      filters: initialFilters,
+      timezone,
+      limit: 50,
+      withSync: projection === "full",
+      decimals: session.settings.currencyDecimals,
+    }).catch(() => undefined),
     fetchDeviceSummary(supabase, projection, initialFilters, timezone).catch(() => undefined),
   ]);
 
@@ -35,11 +44,18 @@ export async function loadWorkspace(
   const capabilities: WorkspaceCapabilities = {
     canEdit: caps.editDevice(p),
     canArchive: caps.archive(p),
+    canDelete: caps.deleteDevice(p),
     canReview: caps.review(p),
     canExport: p.has("reports.export"),
     canFinancialReport: caps.financialReport(p),
+    canCheck: caps.readFull(p),
+    canPublish: caps.publishPrices(p),
+    canLink: caps.editDevice(p),
     readOnly: Boolean(session.previewRole),
   };
+  const compare = projection === "full" ? syncCompare(session.settings.currencyDecimals) : null;
+  const config = syncConfig();
+  const sync = compare ? { compare, lists: { erpSelling: config.erpSelling, erpBuying: config.erpBuying } } : null;
 
   const initialPage: DevicePageResponse | undefined = page ? { ...page, summary, projection } : undefined;
 
@@ -52,5 +68,6 @@ export async function loadWorkspace(
     money: { currency: session.settings.currencyCode, decimals: session.settings.currencyDecimals },
     timezone,
     capabilities,
+    sync,
   };
 }

@@ -40,3 +40,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# business spreadsheets (purchase prices) — never commit or serve them
+# (anything in public/ is downloadable from the live site)
+*.xlsx
+*.xls
+*.csv

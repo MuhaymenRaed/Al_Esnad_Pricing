@@ -55,16 +55,30 @@ export async function setBrandActiveAction(id: string, isActive: boolean): Promi
   return ok(undefined, isActive ? "brands.activated" : "brands.deactivated");
 }
 
-export async function deleteBrandAction(id: string): Promise<ActionResult> {
+/**
+ * Devices reference their brand with ON DELETE RESTRICT, so a brand can only be
+ * deleted once it has no devices at all (archived ones included). Pass
+ * `leavingPage` from the brand's own page: the caller navigates to /brands, so
+ * the deleted brand's page is not refreshed into a 404 first.
+ */
+export async function deleteBrandAction(id: string, options: { leavingPage?: boolean } = {}): Promise<ActionResult> {
   const auth = await authorizeAction("brands.manage");
   if ("error" in auth) return auth.error;
   const supabase = await createClient();
-  const { error } = await supabase.from("brands").delete().eq("id", id);
+  const { error, count } = await supabase.from("brands").delete({ count: "exact" }).eq("id", id);
   if (error) {
     if (error.code === "23503") return fail("brands.hasDevices");
     return fail(toUserMessage(error));
   }
-  revalidateCatalogue();
+  if (!count) return fail("errors.notFound");
+  if (options.leavingPage) {
+    revalidatePath("/brands");
+    revalidatePath("/categories");
+    revalidatePath("/devices");
+    revalidatePath("/dashboard");
+  } else {
+    revalidateCatalogue();
+  }
   return ok(undefined, "brands.deleted");
 }
 

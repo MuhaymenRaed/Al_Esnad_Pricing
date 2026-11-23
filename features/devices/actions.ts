@@ -3,6 +3,7 @@
 import { refresh, revalidatePath } from "next/cache";
 import { authorizeAction } from "@/lib/auth/guard";
 import { fail, ok, toUserMessage, type ActionResult } from "@/lib/errors";
+import { refreshStaleSyncState } from "@/lib/price-sync/state";
 import { createClient } from "@/lib/supabase/server";
 import {
   deviceSubmissionSchema,
@@ -33,10 +34,11 @@ export type SavedFinancials = {
  * Administrator / Pricing Manager: create or update a device with its full
  * pricing in ONE transaction (public.save_device). The database computes the
  * discount amount, final cost and selling price; we read them back.
+ * alisnad.iq and ERPNext are NOT changed here — only "Publish" does that.
  */
 export async function saveDeviceAction(
   input: ManagedDeviceInput,
-): Promise<ActionResult<{ id: string; financials: SavedFinancials | null; status: DeviceStatus; updatedAt: string }>> {
+): Promise<ActionResult<{ id: string; financials: SavedFinancials | null; status: DeviceStatus; updatedAt: string; linked: boolean }>> {
   const isNew = !input.id;
   const auth = await authorizeAction(isNew ? ["devices.create", "financials.update"] : ["devices.update", "financials.update"]);
   if ("error" in auth) return auth.error;
@@ -60,6 +62,7 @@ export async function saveDeviceAction(
       metadata: entriesToMetadata(device.metadata),
       status,
       expected_updated_at: expectedUpdatedAt ?? null,
+      link_codes: device.linkCodes,
     },
     p_financials: {
       official_purchase_price: financials.officialPurchasePrice,
@@ -69,7 +72,13 @@ export async function saveDeviceAction(
       company_profit: financials.companyProfit || "0",
     },
   });
+  if (error?.code === "23505" && /device_link_codes/.test(error.message)) {
+    return fail("validation.codeTaken", { linkCodes: ["validation.codeTaken"] });
+  }
   if (error || !savedId) return fail(toUserMessage(error, "errors.saveFailed"));
+
+  // New or changed link codes: look them up (read-only) so the status badges are current.
+  if (device.linkCodes.length) await refreshStaleSyncState([savedId]);
 
   // Read back the authoritative values computed by the database.
   const { data: saved } = await supabase.rpc("get_managed_device", { p_id: savedId });
@@ -83,6 +92,7 @@ export async function saveDeviceAction(
   return ok(
     {
       id: savedId,
+      linked: device.linkCodes.length > 0,
       status: record?.device.status ?? status,
       updatedAt: record?.device.updated_at ?? new Date().toISOString(),
       financials: f
@@ -169,4 +179,26 @@ export async function setDevicesStatusAction(
   revalidateDevices();
   refresh();
   return ok({ changed: data ?? 0, requested: unique.length });
+}
+
+/**
+ * Permanent deletion through the guarded RPC (devices.delete). Pass
+ * `leavingPage` from a device's own page: the caller navigates away, so the
+ * current (now deleted) page is not refreshed into a 404 first.
+ */
+export async function deleteDevicesAction(
+  ids: string[],
+  options: { leavingPage?: boolean } = {},
+): Promise<ActionResult<{ deleted: number; requested: number }>> {
+  const auth = await authorizeAction("devices.delete");
+  if ("error" in auth) return auth.error;
+  const unique = [...new Set(ids)].filter((id) => /^[0-9a-f-]{36}$/i.test(id)).slice(0, 1000);
+  if (!unique.length) return fail("errors.selectDevices");
+
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("delete_devices", { p_ids: unique });
+  if (error) return fail(toUserMessage(error));
+  revalidateDevices();
+  if (!options.leavingPage) refresh();
+  return ok({ deleted: data ?? 0, requested: unique.length });
 }
