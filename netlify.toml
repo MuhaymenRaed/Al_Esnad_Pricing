@@ -9,6 +9,13 @@
 [build.environment]
   NODE_VERSION = "24"
   NEXT_TELEMETRY_DISABLED = "1"
+  # Netlify's secret scanner treats every environment variable as a secret. These are
+  # NOT secrets: NEXT_PUBLIC_* values are sent to the browser by design (the Supabase
+  # anon key is protected by row-level security), and the ERPNext names are plain
+  # configuration ("الاسناد" is also the company name used throughout the app's texts).
+  # Real secrets — SUPABASE_SERVICE_ROLE_KEY, ALISNAD_SUPABASE_SERVICE_ROLE_KEY,
+  # ERPNEXT_API_KEY, ERPNEXT_API_SECRET — are still scanned and must never appear.
+  SECRETS_SCAN_OMIT_KEYS = "NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY,NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,NEXT_PUBLIC_SITE_URL,ERPNEXT_COMPANY,ERPNEXT_SELLING_PRICE_LIST,ERPNEXT_BUYING_PRICE_LIST,ERPNEXT_ITEM_GROUPS"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
